@@ -24,7 +24,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 CLAUDE_HOME = Path.home() / ".claude"
 CLAUDE_JSON = Path.home() / ".claude.json"
@@ -37,6 +37,23 @@ CACHE_LIFE_LONG_S = 3600      # 1-hour prompt cache
 CACHE_LIFE_SHORT_S = 300      # 5-minute prompt cache
 CACHE_WRITE_MULTIPLIER = 1.25 # cache writes bill at 1.25x input unless the price file says otherwise
 UNUSED_DAYS = 7
+# --advise thresholds: each rule fires only on a measured number
+FILL_HIGH = 0.8               # compact when the context is this full
+FEW_TURNS = 3                 # ... or this few turns are left
+COLD_LARGE = 50_000           # a cold session this large is cheaper to restart than to resume
+MANY_COMPACTIONS = 2          # compacted this often: the session holds several topics
+BASELINE_HIGH = 0.15          # first call above this share of the window: heavy setup
+SUB_HEAVY = 0.5               # subagents used this share of all tokens
+CACHE_LOW = 0.5               # cache share below this after ...
+CACHE_TURNS = 10              # ... this many turns
+SPLIT_TURNS = 10              # a top-model-only session this long could split plan and build
+TOP_MODELS = ("opus", "fable")
+LOOKUP_TOOLS = {"Read", "Grep", "Glob", "WebFetch", "WebSearch", "LS"}
+GENERIC_TOOLS = LOOKUP_TOOLS | {"Bash", "Edit", "Write", "MultiEdit", "Agent", "Task", "TodoWrite", "ToolSearch"}
+LOOKUP_SHARE = 0.6            # lookups this share of tool calls ...
+LOOKUP_CALLS = 20             # ... over at least this many calls
+REPEAT_SHARE = 0.4            # one tool this share of tool calls ...
+REPEAT_CALLS = 30             # ... and this many calls: worth a skill or script
 OTHER = "other"
 MAX_TEXT = 80
 
@@ -324,6 +341,59 @@ def unused(root: Path, *, now: datetime, claude_home: Path, claude_json: Path, d
     return {"days": days, "mcp": sorted(mcp - used_mcp), "skills": sorted(skills - used_skills)}
 
 
+def _row(kind: str, session: str, reason: str, do: str) -> dict:
+    return {"kind": kind, "session": session, "reason": reason[:MAX_TEXT], "do": do[:MAX_TEXT]}
+
+
+def _session_advice(s: dict, window: int) -> list:
+    sid, rows = s["id"], []
+    if s["fill"] >= FILL_HIGH or (s["turns_left"] is not None and s["turns_left"] <= FEW_TURNS):
+        left = "-" if s["turns_left"] is None else s["turns_left"]
+        rows.append(_row("compact", sid, f"{s['fill']:.0%} full, {left} turns left",
+                         "/compact at the next milestone, or /clear for a new topic"))
+    if s["cold"] and s["ctx_now"] >= COLD_LARGE:
+        rows.append(_row("fresh", sid, f"COLD with {short(s['ctx_now'])} context",
+                         "start a fresh session instead of resuming, if the history is done"))
+    if s["compactions"] >= MANY_COMPACTIONS:
+        rows.append(_row("fresh", sid, f"compacted {s['compactions']}x",
+                         "one session per topic: /clear when the topic changes"))
+    if window and s["baseline"] / window >= BASELINE_HIGH:
+        rows.append(_row("trim", sid, f"first call {short(s['baseline'])} ({s['baseline'] / window:.0%} of window)",
+                         "trim CLAUDE.md and rules, turn off unused MCP servers and skills"))
+    spent = s["tokens"]["main"] + s["tokens"]["subagents"]
+    if spent and s["tokens"]["subagents"] / spent >= SUB_HEAVY:
+        rows.append(_row("subagents", sid, f"subagents {s['tokens']['subagents'] / spent:.0%} of tokens",
+                         "delegate only work that cannot fit one context"))
+    if s["turns"] >= CACHE_TURNS and s["cache_share"] < CACHE_LOW:
+        rows.append(_row("cache", sid, f"cache {s['cache_share']:.0%} after {s['turns']} turns",
+                         "keep the prompt prefix stable; avoid edits to CLAUDE.md mid-session"))
+    top = s["models"][0] if s["models"] else None
+    if top and s["turns"] >= SPLIT_TURNS and top["share"] >= 0.9 and any(m in top["name"] for m in TOP_MODELS):
+        rows.append(_row("model-split", sid, f"{top['name'][:30]} on {top['share']:.0%} of calls",
+                         "/model opusplan: plan on the top model, build on a cheaper one"))
+    calls = sum(t["count"] for t in s["tools"])
+    lookups = sum(t["count"] for t in s["tools"] if t["name"] in LOOKUP_TOOLS)
+    if calls >= LOOKUP_CALLS and lookups / calls >= LOOKUP_SHARE:
+        rows.append(_row("local-model", sid, f"lookups {lookups / calls:.0%} of {calls} tool calls",
+                         "propose a small local model for lookups; admit it first, never auto-install"))
+    for t in [t for t in s["tools"] if t["name"] not in GENERIC_TOOLS][:1]:
+        if calls and t["count"] >= REPEAT_CALLS and t["count"] / calls >= REPEAT_SHARE:
+            rows.append(_row("new-skill", sid, f"{t['name'][:30]} {t['count']} calls ({t['count'] / calls:.0%})",
+                             "propose a skill or script for the repeated step"))
+    return rows
+
+
+def advise(body: dict) -> list:
+    """Proposals, never actions: each row is a kind, the session it came from, the measured reason and the step."""
+    rows = [r for s in body["sessions"] for r in _session_advice(s, body["window"])]
+    gone = body.get("unused") or {}
+    for label, key in (("MCP server", "mcp"), ("skill", "skills")):
+        for name in gone.get(key, []):
+            rows.append(_row("cut", "-", f"{label} never called in {gone['days']} days",
+                             f"turn off {label} {name[:40]}"))
+    return rows
+
+
 def check_content_free(body: object) -> None:
     """ValueError when the output could carry free text: any string longer than MAX_TEXT, at any depth."""
     if isinstance(body, dict):
@@ -339,8 +409,9 @@ def check_content_free(body: object) -> None:
 
 def build(*, root: Path, now: Optional[datetime] = None, window: Optional[int] = None, prices: Optional[dict] = None,
           minutes: int = LIVE_MINUTES, claude_home: Path = CLAUDE_HOME, claude_json: Path = CLAUDE_JSON,
-          with_unused: bool = False) -> dict:
+          with_unused: bool = False, with_advice: bool = False) -> dict:
     now = now or datetime.now(timezone.utc)
+    with_unused = with_unused or with_advice
     size, source = (window, "given") if window else compact_window(claude_home)
     body = {
         "generated_at": _stamp(now), "version": __version__, "window": size, "window_source": source,
@@ -348,6 +419,8 @@ def build(*, root: Path, now: Optional[datetime] = None, window: Optional[int] =
         "sessions": live_sessions(root, now=now, window=size, prices=prices or {}, minutes=minutes),
         "unused": unused(root, now=now, claude_home=claude_home, claude_json=claude_json) if with_unused else None,
     }
+    if with_advice:
+        body["advice"] = advise(body)
     check_content_free(body)
     return body
 
@@ -379,6 +452,15 @@ def render(body: dict) -> str:
         for label, key in (("MCP servers", "mcp"), ("skills", "skills")):
             names = body["unused"][key]
             lines.append(f"  never called in {body['unused']['days']} days, {label}: {', '.join(names) if names else '-'}")
+    if "advice" in body:
+        lines.append(f"  advice ({len(body['advice'])}, proposals only, nothing is changed):")
+        for row in body["advice"]:
+            if row["kind"] != "cut":
+                lines.append(f"    [{row['kind']}] {row['session']}: {row['reason']} -> {row['do']}")
+        for label in ("MCP server", "skill"):
+            names = [r["do"].rsplit(" ", 1)[-1] for r in body["advice"] if r["kind"] == "cut" and label in r["reason"]]
+            if names:
+                lines.append(f"    [cut] {len(names)} {label}s never called: turn off {', '.join(names)}")
     return "\n".join(lines)
 
 
@@ -389,6 +471,8 @@ def main(argv: Optional[list] = None) -> int:
     parser.add_argument("--window", type=int, help="context window to measure against (default: from settings, else 200000)")
     parser.add_argument("--prices", type=Path, help="JSON price file, USD per million tokens by model id")
     parser.add_argument("--unused", action="store_true", help="also list MCP servers and skills not called in 7 days")
+    parser.add_argument("--advise", action="store_true",
+                        help="also propose cuts and improvements from the numbers (implies --unused); changes nothing")
     parser.add_argument("--json", action="store_true", help="print JSON instead of the summary")
     parser.add_argument("--max-fill", type=float, help="exit 1 when any session's context fill is at or above this (0-1)")
     parser.add_argument("--version", action="version", version=__version__)
@@ -401,7 +485,8 @@ def main(argv: Optional[list] = None) -> int:
         prices = load_prices(args.prices)
     except (OSError, ValueError) as err:
         parser.error(f"cannot read the price file: {err}")
-    body = build(root=args.root, window=args.window, prices=prices, minutes=args.minutes, with_unused=args.unused)
+    body = build(root=args.root, window=args.window, prices=prices, minutes=args.minutes, with_unused=args.unused,
+                 with_advice=args.advise)
     print(json.dumps(body, indent=2) if args.json else render(body))
     if args.max_fill is None:
         return 0

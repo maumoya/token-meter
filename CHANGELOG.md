@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.0 - 2026-11-11
+
+- `--advise`: proposals for what to cut and improve, drawn only from the numbers: compact, start fresh, trim
+  the baseline, fewer subagents, a stable cache prefix, split plan and build models (`/model opusplan`), a
+  local model for lookups (admitted first, never installed), a skill for a repeated step, and the MCP servers
+  and skills to turn off. Proposals only: it changes nothing. Same content-free output rules as the meter.
+
 ## 0.3.0 - 2026-11-11
 
 - Turns left uses the average turn-to-turn growth over the last 8 turns. Measured on 617 real compactions

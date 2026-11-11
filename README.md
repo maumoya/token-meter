@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  <img src="assets/demo.gif" width="720" alt="Animation: each turn pours more context into a tank; the meter counts the fill and the turns left, marks the cache COLD, and the CI gate stamps FAIL when the tank passes the 92% auto-compact line">
+  <img src="assets/demo.gif" width="720" alt="Animation: each turn pours more context into a tank; the meter counts the fill and the turns left, marks the cache COLD, the CI gate stamps FAIL when the tank passes the 92% auto-compact line, then --advise proposes what to cut: compact, trim, split models, turn off unused skills">
 </p>
 
 # Token Meter
@@ -29,7 +29,9 @@ CI job when an agent run filled too much of its context window.
 Every Claude Code call re-reads the whole context, so context size is the cost driver. Token Meter shows it per
 running session: context size, how full the auto-compact window is, turns left before compaction, cache share, a
 cold-cache warning, main versus subagent tokens, and the MCP servers and skills you never call. So you know when
-to compact, when to start fresh and what to switch off.
+to compact, when to start fresh and what to switch off. With `--advise` it goes one step further and proposes
+the cuts and improvements itself: compact now, start fresh, trim the baseline, split plan and build models, a
+local model for lookups, a skill for a repeated step, and MCP servers and skills to turn off.
 
 Read only, offline, Python standard library. No hooks, no telemetry, no settings edits.
 
@@ -84,6 +86,38 @@ Options: `--minutes N` (live window, default 15), `--window N` (context window, 
 
 Cost is shown only when you pass a price file. The meter never guesses prices.
 
+## Advise: what to cut and improve
+
+`--advise` turns the numbers into proposals. It changes nothing; you pick what to do.
+
+```bash
+python3 skills/token-meter/scripts/token_meter.py --advise
+```
+
+```
+  advice (6, proposals only, nothing is changed):
+    [compact] 59d14008: 86% full, 2 turns left -> /compact at the next milestone, or /clear for a new topic
+    [trim] 59d14008: first call 114k (57% of window) -> trim CLAUDE.md and rules, turn off unused MCP servers and skills
+    [model-split] 59d14008: claude-opus-5-5 on 93% of calls -> /model opusplan: plan on the top model, build on a cheaper one
+    [fresh] 16439f1d: COLD with 161k context -> start a fresh session instead of resuming, if the history is done
+    [cut] 2 MCP servers never called: turn off chrome-mine, notion
+    [cut] 3 skills never called: turn off old-skill, unused-skill, draft-skill
+```
+
+| Kind | When | Proposal |
+|---|---|---|
+| `compact` | fill at or over 80%, or 3 turns left or fewer | compact at the next milestone |
+| `fresh` | COLD with a large context, or compacted twice or more | one session per topic |
+| `trim` | the first call already uses 15% of the window or more | trim instructions, MCP servers, skills |
+| `subagents` | subagents spent half the tokens or more | delegate only work that needs it |
+| `cache` | under 50% cache reads over 10 turns or more | keep the prompt prefix stable |
+| `model-split` | Opus or Fable on 90% of calls or more | plan on the top model, build on a cheaper one (`/model opusplan`) |
+| `local-model` | lookups (Read, Grep, Glob, web) are 60% of calls or more | a small local model for lookups, admitted first, never auto-installed |
+| `new-skill` | one non-generic tool carries 40% of calls or more | a skill or script for that step |
+| `cut` | MCP servers and skills never called in 7 days | turn them off |
+
+The rows are as content-free as the meter: kinds, session ids, numbers and names, each under 80 characters.
+
 ## Privacy and safety
 
 - **Read only and offline.** It reads `~/.claude/projects/**/*.jsonl`, the auto-compact window from
@@ -104,7 +138,7 @@ See [SECURITY.md](SECURITY.md).
 runs that check on the logs an agent run wrote, so a pull request fails when the agent nearly hit auto-compact:
 
 ```yaml
-- uses: maumoya/token-meter@v0.3.0
+- uses: maumoya/token-meter@v0.4.0
   with:
     logs: ~/.claude/projects   # where the agent run wrote its logs
     max-fill: "0.92"           # fail at 92% full or more
@@ -141,6 +175,9 @@ It prints aggregate percentages only: no session ids, names, paths or text.
 
 **Why is a session marked COLD?** It was idle past the prompt cache life (5 min, or 1 h for the long cache),
 so its next call writes the whole context to the cache again.
+
+**Will advise install a model or turn off a server?** No. It only prints proposals. Installing a local model
+or turning off an MCP server or skill is your step, and a new model should pass your own review first.
 
 **Where do prices come from?** From a file you pass with `--prices`. The meter never guesses prices.
 

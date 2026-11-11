@@ -1,7 +1,7 @@
 {
   "name": "token-meter",
-  "version": "0.3.0",
-  "description": "Live token meter for Claude Code: context size, auto-compact fill, turns left, cache share, cold-cache warning, main vs subagent tokens, and the MCP servers and skills you never call, per running session. Read only, offline, numbers and names only.",
+  "version": "0.4.0",
+  "description": "Live token meter for Claude Code: context size, auto-compact fill, turns left, cache share, cold-cache warning, main vs subagent tokens, the MCP servers and skills you never call, and proposals for what to cut and improve, per running session. Read only, offline, numbers and names only.",
   "author": {
     "name": "Mauricio Alonso Moya Tapia",
     "url": "https://github.com/maumoya"
