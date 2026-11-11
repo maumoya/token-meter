@@ -165,6 +165,94 @@ class Unused(Fixture):
         self.assertNotIn("s3cr3t", json.dumps(body))
 
 
+def session(**over):
+    base = {"id": "abcd1234", "idle_s": 10, "cold": False, "ctx_now": 20_000, "fill": 0.1, "turns": 4,
+            "compactions": 0, "subagent_runs": 0, "turns_left": None, "baseline": 10_000, "cache_share": 0.9,
+            "tokens": {"main": 100_000, "subagents": 0}, "models": [{"name": "claude-sonnet-x", "share": 1.0}],
+            "tools": [], "mcp": [], "skills": []}
+    base.update(over)
+    return base
+
+
+def kinds(body):
+    return [row["kind"] for row in tm.advise(body)]
+
+
+class Advise(unittest.TestCase):
+    def body(self, *sessions, unused=None):
+        return {"window": 200_000, "sessions": list(sessions), "unused": unused}
+
+    def test_quiet_session_gets_no_advice(self):
+        self.assertEqual(tm.advise(self.body(session())), [])
+
+    def test_nearly_full_says_compact(self):
+        self.assertIn("compact", kinds(self.body(session(fill=0.86))))
+        self.assertIn("compact", kinds(self.body(session(turns_left=2))))
+
+    def test_cold_and_large_says_fresh(self):
+        self.assertIn("fresh", kinds(self.body(session(cold=True, ctx_now=120_000))))
+        self.assertNotIn("fresh", kinds(self.body(session(cold=True, ctx_now=5_000))))
+
+    def test_many_compactions_says_fresh(self):
+        self.assertIn("fresh", kinds(self.body(session(compactions=3))))
+
+    def test_high_baseline_says_trim(self):
+        self.assertIn("trim", kinds(self.body(session(baseline=45_000))))
+
+    def test_never_called_names_are_cut_one_row_each(self):
+        rows = tm.advise(self.body(unused={"days": 7, "mcp": ["notion"], "skills": ["idle-skill", "old"]}))
+        cut = [r for r in rows if r["kind"] == "cut"]
+        self.assertEqual(len(cut), 3)
+        self.assertTrue(any("notion" in r["do"] for r in cut))
+
+    def test_subagent_heavy(self):
+        heavy = session(tokens={"main": 100_000, "subagents": 300_000}, subagent_runs=6)
+        self.assertIn("subagents", kinds(self.body(heavy)))
+
+    def test_low_cache_share(self):
+        self.assertIn("cache", kinds(self.body(session(cache_share=0.3, turns=12))))
+
+    def test_top_model_only_proposes_a_split(self):
+        top = session(turns=15, models=[{"name": "claude-opus-5-5", "share": 1.0}])
+        rows = [r for r in tm.advise(self.body(top)) if r["kind"] == "model-split"]
+        self.assertEqual(len(rows), 1)
+        self.assertIn("opusplan", rows[0]["do"])
+        self.assertNotIn("model-split", kinds(self.body(session(turns=15))))
+
+    def test_lookup_heavy_proposes_a_local_model_but_never_installs(self):
+        tools = [{"name": "Read", "count": 30}, {"name": "Grep", "count": 20}, {"name": "Edit", "count": 5}]
+        rows = [r for r in tm.advise(self.body(session(tools=tools))) if r["kind"] == "local-model"]
+        self.assertEqual(len(rows), 1)
+        self.assertIn("propose", rows[0]["do"])
+
+    def test_one_tool_repeated_proposes_a_skill(self):
+        tools = [{"name": "NotebookEdit", "count": 45}, {"name": "Edit", "count": 10}]
+        self.assertIn("new-skill", kinds(self.body(session(tools=tools))))
+        generic = [{"name": "Bash", "count": 90}, {"name": "Edit", "count": 10}]
+        self.assertNotIn("new-skill", kinds(self.body(session(tools=generic))))
+
+    def test_rows_are_short_and_content_free(self):
+        noisy = session(fill=0.9, cold=True, ctx_now=180_000, compactions=4, baseline=60_000, cache_share=0.2,
+                        turns=30, tokens={"main": 1, "subagents": 9}, subagent_runs=3,
+                        models=[{"name": "claude-opus-5-5", "share": 1.0}],
+                        tools=[{"name": "Bash", "count": 80}, {"name": "Read", "count": 40}])
+        rows = tm.advise(self.body(noisy, unused={"days": 7, "mcp": ["x"], "skills": []}))
+        self.assertGreaterEqual(len(rows), 8)
+        tm.check_content_free(rows)
+        for row in rows:
+            self.assertEqual(set(row), {"kind", "session", "reason", "do"})
+
+    def test_cli_advise_adds_the_list(self):
+        with tempfile.TemporaryDirectory() as tmp, redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(tm.main(["--root", tmp, "--json", "--advise", "--window", "1000"]), 0)
+        body = json.loads(out.getvalue())
+        self.assertIsInstance(body["advice"], list)
+        self.assertIsNotNone(body["unused"])
+        with tempfile.TemporaryDirectory() as tmp, redirect_stdout(io.StringIO()) as out:
+            tm.main(["--root", tmp, "--advise"])
+        self.assertIn("advice", out.getvalue())
+
+
 class Safety(unittest.TestCase):
     def test_imports_nothing_that_talks_to_the_network_or_runs_programs(self):
         tree = ast.parse(SCRIPT.read_text(encoding="utf-8"))

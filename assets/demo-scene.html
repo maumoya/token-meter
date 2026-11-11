@@ -22,6 +22,12 @@
   .stamp { position: absolute; right: 70px; top: 300px; padding: 8px 18px; border: 4px solid #ef4444; color: #ef4444;
            font-size: 26px; font-weight: 900; transform: rotate(-8deg) scale(2); opacity: 0; transition: all .35s ease; }
   .stamp.on { opacity: 1; transform: rotate(-8deg) scale(1); }
+  .advice { position: absolute; right: 30px; top: 80px; width: 330px; padding: 14px 18px; border-radius: 14px;
+            background: #0b3a26; border: 2px solid #4ade80; font: 14px/1.75 ui-monospace, Menlo, monospace; color: #e5e7eb;
+            transform: translateX(420px); transition: transform .45s ease; z-index: 2; }
+  .advice.on { transform: translateX(0); }
+  .advice .h { color: #4ade80; font-weight: 700; }
+  .advice .x { color: #fbbf24; }
 </style>
 <div class="stage">
   <div class="title">Every turn re-reads the context. <b>token-meter</b> watches it fill.</div>
@@ -35,23 +41,38 @@
     <div id="gate">CI gate: max 92%</div>
   </div>
   <div class="stamp" id="stamp">CI FAIL 94%</div>
+  <div class="advice" id="advice">
+    <div class="h">$ token_meter.py --advise</div>
+    <div><span class="x">compact</span> 94% full -&gt; /compact now</div>
+    <div><span class="x">trim</span> base 57% -&gt; trim CLAUDE.md</div>
+    <div><span class="x">model-split</span> -&gt; plan Opus, build cheaper</div>
+    <div><span class="x">cut</span> 3 skills never called -&gt; off</div>
+    <div class="h">proposals only, you pick</div>
+  </div>
 </div>
 <script>
   const fit = () => { document.querySelector(".stage").style.zoom = Math.min(innerWidth / 720, innerHeight / 405); };
   fit(); addEventListener("resize", fit);
   const steps = [20, 30, 40, 52, 63, 74, 84, 94];
   const fill = document.getElementById("fill"), stage = document.querySelector(".stage");
-  let i = 0;
+  let i = 0, advised = false;
   function tick() {
+    if (i >= steps.length && !advised) {   // end: the meter proposes what to cut
+      advised = true;
+      document.getElementById("advice").classList.add("on");
+      setTimeout(tick, 2300);
+      return;
+    }
     if (i >= steps.length) {   // loop, so any recording window shows the tank filling
-      i = 0;
+      i = 0; advised = false;
+      document.getElementById("advice").classList.remove("on");
       document.querySelectorAll(".turn").forEach(t => t.remove());
       document.getElementById("stamp").classList.remove("on");
       document.getElementById("cold").style.opacity = 0;
       fill.style.height = "0%"; fill.style.background = "#4ade80";
       document.getElementById("ctx").textContent = "0k";
       document.getElementById("pct").textContent = "0%";
-      setTimeout(tick, 1600);
+      setTimeout(tick, 700);
       return;
     }
     const pct = steps[i];
@@ -69,7 +90,7 @@
     if (i === 5) document.getElementById("cold").style.opacity = 1;
     if (pct >= 92) setTimeout(() => document.getElementById("stamp").classList.add("on"), 300);
     i++;
-    setTimeout(tick, 850);
+    setTimeout(tick, 780);
   }
   setTimeout(tick, 400);
 </script>

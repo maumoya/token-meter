@@ -1,0 +1,16 @@
+{
+  "name": "demo-card",
+  "url": "/assets/demo-scene.html",
+  "notes": "The README demo card: the tank fills, the CI gate stamps FAIL, then the advise panel proposes cuts.",
+  "steps": [
+    {"do": "wait_for", "text": "CI FAIL 94%", "timeout_ms": 10000},
+    {"do": "expect", "expect": "text", "value": "--advise", "within": "#advice", "timeout_ms": 5000, "claim": "the advise panel slides in after the gate fails"},
+    {"do": "expect", "expect": "count", "selector": "#advice .x", "equals": 4, "claim": "it shows four proposals: compact, trim, model-split, cut"}
+  ],
+  "claims": [
+    {"expect": "text", "value": "proposals only, you pick", "within": "#advice", "claim": "the panel says nothing is changed"},
+    {"expect": "visible", "target": {"selector": "#advice"}, "claim": "the panel is on screen"},
+    {"expect": "no_console_errors"},
+    {"expect": "no_failed_requests"}
+  ]
+}
