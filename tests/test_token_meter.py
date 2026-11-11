@@ -240,7 +240,8 @@ class Advise(unittest.TestCase):
         self.assertGreaterEqual(len(rows), 8)
         tm.check_content_free(rows)
         for row in rows:
-            self.assertEqual(set(row), {"kind", "session", "reason", "do"})
+            self.assertLessEqual({"kind", "session", "reason", "do"}, set(row))
+            self.assertLessEqual(set(row), {"kind", "session", "reason", "do", "name", "label", "saves"})
 
     def test_cli_advise_adds_the_list(self):
         with tempfile.TemporaryDirectory() as tmp, redirect_stdout(io.StringIO()) as out:
@@ -251,6 +252,110 @@ class Advise(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp, redirect_stdout(io.StringIO()) as out:
             tm.main(["--root", tmp, "--advise"])
         self.assertIn("advice", out.getvalue())
+
+
+class Costs(Fixture):
+    def setUp(self):
+        super().setUp()
+        self.other = tempfile.TemporaryDirectory()
+        self.addCleanup(self.other.cleanup)
+        self.project = Path(self.other.name) / "app"   # apart from the fake home, as a real project is
+        self.project.mkdir()
+
+    def put(self, path, text):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+
+    def by_name(self):
+        return {r["name"]: r for r in tm.sources(self.home, self.project)}
+
+    def test_counts_chars_over_four(self):
+        self.put(self.home / "CLAUDE.md", "x" * 401)
+        self.put(self.home / "rules" / "style.md", "y" * 40)
+        self.put(self.project / "CLAUDE.md", "z" * 8)
+        rows = self.by_name()
+        self.assertEqual(rows["global:CLAUDE.md"]["tokens"], 101)
+        self.assertEqual(rows["rules:style"]["tokens"], 10)
+        self.assertEqual(rows["project:CLAUDE.md"]["tokens"], 2)
+
+    def test_memory_counts_only_the_lines_that_load(self):
+        slug = tm._SLUG.sub("-", str(self.project))
+        self.put(self.home / "projects" / slug / "memory" / "MEMORY.md", "abcd\n" * 500)
+        row = self.by_name()["memory:MEMORY.md"]
+        self.assertEqual(row["lines"], 500)
+        self.assertEqual(row["tokens"], tm.estimate_tokens("abcd\n" * tm.MEMORY_LINES))
+
+    def test_skill_counts_only_its_header(self):
+        self.put(self.home / "skills" / "big" / "SKILL.md", "---\nname: big\n---\n" + "body " * 5000)
+        self.assertLess(self.by_name()["big"]["tokens"], 10)
+
+    def test_text_never_reaches_the_output(self):
+        self.put(self.home / "CLAUDE.md", SECRET * 50)
+        self.put(self.project / "CLAUDE.md", SECRET)
+        body = self.build(with_advice=True, project=self.project)
+        self.assertNotIn("MY-PRIVATE", json.dumps(body))
+        self.assertNotIn("MY-PRIVATE", tm.render(body))
+        tm.check_content_free(body)
+
+    def test_heavy_or_long_files_get_a_trim_row(self):
+        self.put(self.home / "CLAUDE.md", "x" * 9000)
+        self.put(self.project / "CLAUDE.md", "short\n" * (tm.CLAUDE_MD_LINES + 1))
+        self.put(self.home / "rules" / "small.md", "ok")
+        rows = [r for r in tm.advise(self.build(with_advice=True, project=self.project)) if r["kind"] == "trim-source"]
+        self.assertEqual({r["name"] for r in rows}, {"global:CLAUDE.md", "project:CLAUDE.md"})
+        self.assertEqual(next(r for r in rows if r["name"] == "global:CLAUDE.md")["saves"], 2250)
+
+    def test_cut_rows_carry_what_they_save(self):
+        self.put(self.home / "skills" / "idle" / "SKILL.md", "---\nname: idle\ndescription: " + "d" * 396 + "\n---\n")
+        body = self.build(with_advice=True, project=self.project)
+        cut = next(r for r in body["advice"] if r["kind"] == "cut" and r["name"] == "idle")
+        self.assertGreater(cut["saves"], 100)
+        self.assertIn("saves ~", tm.render(body))
+
+    def test_costs_section_and_share(self):
+        self.put(self.home / "CLAUDE.md", "x" * 4000)
+        body = self.build(with_costs=True, project=self.project, window=10_000)
+        self.assertEqual(body["costs"]["total"], 1000)
+        self.assertEqual(body["costs"]["window_share"], 0.1)
+        self.assertIn("loaded on every call: ~1k", tm.render(body))
+        self.assertIsNone(self.build()["costs"])
+
+
+class Statusline(Fixture):
+    def line(self, given, now=NOW):
+        return tm.statusline(json.dumps(given) if isinstance(given, dict) else given,
+                             root=self.root, window=200_000, now=now)
+
+    def test_bar_and_numbers(self):
+        path = self.write("p/s.jsonl", [user(), reply("m1", 100_000), user(), reply("m2", 120_000)])
+        out = self.line({"transcript_path": str(path)})
+        self.assertTrue(out.startswith("ctx 120k ██████░░░░ 60%"), out)
+        self.assertIn("turns left", out)
+        self.assertNotIn("COLD", out)
+        self.assertNotIn(str(path), out)
+        self.assertLessEqual(len(out), tm.MAX_TEXT)
+
+    def test_cold_when_idle(self):
+        path = self.write("p/s.jsonl", [user(), reply("m1", 100_000)])
+        self.assertIn("COLD", self.line({"transcript_path": str(path)}, now=NOW + timedelta(hours=2)))
+
+    def test_refuses_anything_else(self):
+        outside = Path(self.tmp.name) / "elsewhere.jsonl"
+        outside.write_text(json.dumps(reply("m1", 1000)), encoding="utf-8")
+        for given in ("not json", "[]", {}, {"transcript_path": 5}, {"transcript_path": str(self.root / "x.txt")},
+                      {"transcript_path": str(outside)}, {"transcript_path": str(self.root / "missing.jsonl")}):
+            self.assertEqual(self.line(given), "ctx -", given)
+
+    def test_cli_reads_stdin(self):
+        path = self.write("p/s.jsonl", [user(), reply("m1", 50_000)])
+        old = sys.stdin
+        try:
+            sys.stdin = io.StringIO(json.dumps({"transcript_path": str(path)}))
+            with redirect_stdout(io.StringIO()) as out:
+                self.assertEqual(tm.main(["--statusline", "--root", str(self.root), "--window", "100000"]), 0)
+        finally:
+            sys.stdin = old
+        self.assertTrue(out.getvalue().startswith("ctx 50k"), out.getvalue())
 
 
 class Safety(unittest.TestCase):

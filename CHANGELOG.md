@@ -1,7 +1,17 @@
 # Changelog
 
-## Unreleased
+## 0.5.0 - 2026-11-11
 
+- README shows the OpenSSF Best Practices badge (passing).
+- CI actions bumped to their latest pinned commits.
+- `--costs`: what every call pays before you type, per source: global and project CLAUDE.md files, rules,
+  the MEMORY.md index (only the 200 lines that load) and skill headers, estimated as characters / 4, with
+  the total share of the window. The text is read only to count it and never printed.
+- `--advise` now says what each cut saves: `trim-source` rows for a heavy (2k tokens or more) or long
+  (over 300 lines; MEMORY.md over 200) file, and the tokens per call each unused skill costs.
+- `--statusline`: one line for the Claude Code status line (`ctx 166k ████████░░ 83% · 4 turns left ·
+  cache 93%`, plus `COLD`), read from the JSON Claude Code passes on stdin. It reads only that session's
+  log, and only under the logs folder.
 - README shows the OpenSSF Best Practices badge (passing).
 - CI actions bumped to their latest pinned commits.
 

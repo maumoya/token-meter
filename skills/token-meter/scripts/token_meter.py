@@ -5,13 +5,16 @@ Reads the Claude Code session logs (~/.claude/projects/**/*.jsonl) READ ONLY and
 context now and how full the auto-compact window is, turns left before compaction, the starting baseline,
 cache share, a "cold" mark when the prompt cache has expired, tokens for the main thread and for subagents,
 cost when you give a price file, models, and calls per tool, MCP server and skill. With --unused it also lists
-the connected MCP servers and personal skills that no session called in the last 7 days.
+the connected MCP servers and personal skills that no session called in the last 7 days. --costs estimates
+what CLAUDE.md files, rules, the MEMORY.md index and skill headers add to every call (characters / 4), and
+--statusline prints one line for the Claude Code status line from the JSON it passes on stdin.
 
-Privacy: no prompt, reply, file path or file text ever reaches the output. Only numbers, model ids, short
+Privacy: no prompt, reply, file path or file text ever reaches the output (--costs reads those files only to count them). Only numbers, model ids, short
 session ids and tool, MCP server and skill names; a name that is not a plain identifier prints as "other".
 No network, no writes, no hooks, no background process. Python 3.10+ standard library only.
 
-    python3 token_meter.py [--json] [--minutes 15] [--window N] [--prices FILE] [--unused] [--root DIR]
+    python3 token_meter.py [--json] [--minutes 15] [--window N] [--prices FILE] [--unused] [--advise]
+                           [--costs] [--project DIR] [--max-fill F] [--root DIR] [--statusline]
 """
 from __future__ import annotations
 
@@ -24,7 +27,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 CLAUDE_HOME = Path.home() / ".claude"
 CLAUDE_JSON = Path.home() / ".claude.json"
@@ -54,10 +57,18 @@ LOOKUP_SHARE = 0.6            # lookups this share of tool calls ...
 LOOKUP_CALLS = 20             # ... over at least this many calls
 REPEAT_SHARE = 0.4            # one tool this share of tool calls ...
 REPEAT_CALLS = 30             # ... and this many calls: worth a skill or script
+# --costs: what each always-loaded source adds to every call (an estimate, see estimate_tokens)
+CHARS_PER_TOKEN = 4           # about 4 characters per token for English text and code
+SOURCE_HEAVY = 2_000          # a source this large is worth a trim
+CLAUDE_MD_LINES = 300         # an instruction file longer than this is hard to follow
+MEMORY_LINES = 200            # Claude Code loads only the first 200 lines of MEMORY.md
+MAX_STDIN = 1_000_000         # --statusline reads at most this much JSON
+BAR = 10                      # --statusline bar width
 OTHER = "other"
 MAX_TEXT = 80
 
 _NAME = re.compile(r"[A-Za-z0-9_.:\-]{1,80}")
+_SLUG = re.compile(r"[^A-Za-z0-9]")
 _MCP_USE = re.compile(r'"name":\s*"mcp__([^"]{1,200}?)__[^"]*"')
 _SKILL_USE = re.compile(r'"skill":\s*"([^"]{1,200})"')
 
@@ -341,8 +352,84 @@ def unused(root: Path, *, now: datetime, claude_home: Path, claude_json: Path, d
     return {"days": days, "mcp": sorted(mcp - used_mcp), "skills": sorted(skills - used_skills)}
 
 
-def _row(kind: str, session: str, reason: str, do: str) -> dict:
-    return {"kind": kind, "session": session, "reason": reason[:MAX_TEXT], "do": do[:MAX_TEXT]}
+def estimate_tokens(text: str) -> int:
+    """Tokens a text adds to the context, estimated as characters / 4 (rounded up). Offline: no tokenizer."""
+    return -(-len(text) // CHARS_PER_TOKEN)
+
+
+def _text(path: Path) -> Optional[str]:
+    try:
+        return path.read_text(encoding="utf-8", errors="replace") if path.is_file() else None
+    except OSError:
+        return None
+
+
+def _frontmatter(text: str) -> str:
+    """The SKILL.md header (name and description): the only part loaded before the skill is used."""
+    if text.startswith("---"):
+        end = text.find("\n---", 3)
+        if end > 0:
+            return text[3:end]
+    return ""
+
+
+def _lines(text: str) -> int:
+    return text.count("\n") + (1 if text and not text.endswith("\n") else 0)
+
+
+def _project_folders(project: Path) -> list:
+    """The project folder and its parents up to (not including) the home folder: where CLAUDE.md files load from."""
+    home, folders = Path.home(), []
+    for folder in [project, *project.parents]:
+        if folder == home or folder == folder.parent:
+            break
+        folders.append(folder)
+    return folders
+
+
+def sources(claude_home: Path, project: Path) -> list:
+    """What each always-loaded source costs per call: instructions, rules, memory index and skill headers.
+    Each row is a kind, a name, estimated tokens and lines; the text itself never leaves this function."""
+    rows: list = []
+
+    def add(kind: str, name: str, text: Optional[str], loaded: Optional[str] = None) -> None:
+        if text is not None:
+            rows.append({"kind": kind, "name": clean_name(name), "lines": _lines(text),
+                         "tokens": estimate_tokens(text if loaded is None else loaded)})
+
+    add("instructions", "global:CLAUDE.md", _text(claude_home / "CLAUDE.md"))
+    for path in sorted((claude_home / "rules").rglob("*.md")):
+        add("rules", f"rules:{path.stem}", _text(path))
+    folders = _project_folders(project)
+    for depth, folder in enumerate(folders):
+        where = "project" if depth == 0 else f"up{depth}"
+        for rel in ("CLAUDE.md", ".claude/CLAUDE.md", "CLAUDE.local.md"):
+            add("instructions", f"{where}:{rel.replace('/', '-')}", _text(folder / rel))
+        for path in sorted((folder / ".claude" / "rules").glob("*.md")):
+            add("rules", f"{where}-rules:{path.stem}", _text(path))
+    for folder in folders:
+        memory = _text(claude_home / "projects" / _SLUG.sub("-", str(folder)) / "memory" / "MEMORY.md")
+        if memory is not None:
+            add("memory", "memory:MEMORY.md", memory, "".join(memory.splitlines(True)[:MEMORY_LINES]))
+            break
+    for path in sorted((claude_home / "skills").glob("*/SKILL.md")):
+        text = _text(path)
+        add("skill", path.parent.name, None if text is None else _frontmatter(text))
+    return sorted(rows, key=lambda r: (-r["tokens"], r["name"]))
+
+
+def costs(claude_home: Path, project: Path, window: int) -> dict:
+    rows = sources(claude_home, project)
+    total = sum(r["tokens"] for r in rows)
+    by_kind: Counter = Counter()
+    for r in rows:
+        by_kind[r["kind"]] += r["tokens"]
+    return {"method": "chars/4", "total": total, "window_share": round(total / window, 3) if window else 0.0,
+            "by_kind": dict(sorted(by_kind.items())), "sources": rows}
+
+
+def _row(kind: str, session: str, reason: str, do: str, **extra) -> dict:
+    return {"kind": kind, "session": session, "reason": reason[:MAX_TEXT], "do": do[:MAX_TEXT], **extra}
 
 
 def _session_advice(s: dict, window: int) -> list:
@@ -386,11 +473,29 @@ def _session_advice(s: dict, window: int) -> list:
 def advise(body: dict) -> list:
     """Proposals, never actions: each row is a kind, the session it came from, the measured reason and the step."""
     rows = [r for s in body["sessions"] for r in _session_advice(s, body["window"])]
+    found = (body.get("costs") or {}).get("sources", [])
+    skill_cost = {r["name"]: r["tokens"] for r in found if r["kind"] == "skill"}
+    for r in found:
+        if r["kind"] == "skill":
+            continue
+        why = []
+        if r["tokens"] >= SOURCE_HEAVY:
+            why.append(f"~{short(r['tokens'])} tokens on every call")
+        if r["kind"] == "memory" and r["lines"] > MEMORY_LINES:
+            why.append(f"{r['lines']} lines, only {MEMORY_LINES} load")
+        elif r["kind"] != "memory" and r["lines"] > CLAUDE_MD_LINES:
+            why.append(f"{r['lines']} lines")
+        if why:
+            rows.append(_row("trim-source", "-", f"{r['name'][:40]}: " + ", ".join(why),
+                             "trim it, or move detail to a file read on demand",
+                             name=r["name"], saves=r["tokens"]))
     gone = body.get("unused") or {}
     for label, key in (("MCP server", "mcp"), ("skill", "skills")):
         for name in gone.get(key, []):
+            saves = skill_cost.get(name) if key == "skills" else None
             rows.append(_row("cut", "-", f"{label} never called in {gone['days']} days",
-                             f"turn off {label} {name[:40]}"))
+                             f"turn off {label} {name[:40]}" + (f": -{short(saves)}/call" if saves else ""),
+                             name=name, label=label, saves=saves))
     return rows
 
 
@@ -409,15 +514,18 @@ def check_content_free(body: object) -> None:
 
 def build(*, root: Path, now: Optional[datetime] = None, window: Optional[int] = None, prices: Optional[dict] = None,
           minutes: int = LIVE_MINUTES, claude_home: Path = CLAUDE_HOME, claude_json: Path = CLAUDE_JSON,
-          with_unused: bool = False, with_advice: bool = False) -> dict:
+          with_unused: bool = False, with_advice: bool = False, with_costs: bool = False,
+          project: Optional[Path] = None) -> dict:
     now = now or datetime.now(timezone.utc)
     with_unused = with_unused or with_advice
+    with_costs = with_costs or with_advice
     size, source = (window, "given") if window else compact_window(claude_home)
     body = {
         "generated_at": _stamp(now), "version": __version__, "window": size, "window_source": source,
         "live_minutes": minutes,
         "sessions": live_sessions(root, now=now, window=size, prices=prices or {}, minutes=minutes),
         "unused": unused(root, now=now, claude_home=claude_home, claude_json=claude_json) if with_unused else None,
+        "costs": costs(claude_home, project or Path.cwd(), size) if with_costs else None,
     }
     if with_advice:
         body["advice"] = advise(body)
@@ -452,16 +560,58 @@ def render(body: dict) -> str:
         for label, key in (("MCP servers", "mcp"), ("skills", "skills")):
             names = body["unused"][key]
             lines.append(f"  never called in {body['unused']['days']} days, {label}: {', '.join(names) if names else '-'}")
+    if body.get("costs"):
+        c = body["costs"]
+        kinds = ", ".join(f"{k} {short(v)}" for k, v in c["by_kind"].items())
+        lines.append(f"  loaded on every call: ~{short(c['total'])} tokens ({c['window_share']:.0%} of window, "
+                     f"{c['method']}) · {kinds or '-'}")
+        top = [r for r in c["sources"] if r["kind"] != "skill"][:TOP]
+        if top:
+            lines.append("      largest: " + ", ".join(f"{r['name']} {short(r['tokens'])}" for r in top))
     if "advice" in body:
         lines.append(f"  advice ({len(body['advice'])}, proposals only, nothing is changed):")
         for row in body["advice"]:
             if row["kind"] != "cut":
-                lines.append(f"    [{row['kind']}] {row['session']}: {row['reason']} -> {row['do']}")
+                where = "" if row["session"] == "-" else f"{row['session']}: "
+                lines.append(f"    [{row['kind']}] {where}{row['reason']} -> {row['do']}")
         for label in ("MCP server", "skill"):
-            names = [r["do"].rsplit(" ", 1)[-1] for r in body["advice"] if r["kind"] == "cut" and label in r["reason"]]
-            if names:
-                lines.append(f"    [cut] {len(names)} {label}s never called: turn off {', '.join(names)}")
+            cut = [r for r in body["advice"] if r["kind"] == "cut" and r.get("label") == label]
+            if cut:
+                saves = sum(r["saves"] or 0 for r in cut)
+                lines.append(f"    [cut] {len(cut)} {label}s never called: turn off "
+                             + ", ".join(r["name"] for r in cut) + (f" (saves ~{short(saves)}/call)" if saves else ""))
     return "\n".join(lines)
+
+
+def statusline(raw: str, *, root: Path, window: int, now: Optional[datetime] = None) -> str:
+    """One line for the Claude Code status line, from the JSON it passes on stdin. Reads only that session's log,
+    and only when it sits under the logs folder; anything else prints "ctx -"."""
+    now = now or datetime.now(timezone.utc)
+    try:
+        given = json.loads(raw)
+    except ValueError:
+        return "ctx -"
+    path = given.get("transcript_path") if isinstance(given, dict) else None
+    if not isinstance(path, str) or not path.endswith(".jsonl"):
+        return "ctx -"
+    try:
+        log = Path(path).resolve()
+        log.relative_to(root.resolve())
+    except (OSError, ValueError):
+        return "ctx -"
+    state = Session()
+    state.read(log, "main", {})
+    if not state.ctx_now:
+        return "ctx -"
+    fill = state.ctx_now / window
+    filled = min(BAR, round(fill * BAR))
+    left = state.turns_left(window)
+    idle = (now - state.last_at).total_seconds() if state.last_at else 0
+    cold = idle > (CACHE_LIFE_LONG_S if state.long_cache else CACHE_LIFE_SHORT_S)
+    cache = state.cache_read / state.ctx_total if state.ctx_total else 0.0
+    line = (f"ctx {short(state.ctx_now)} {'█' * filled}{'░' * (BAR - filled)} {fill:.0%} · "
+            f"{'-' if left is None else left} turns left · cache {cache:.0%}{' · COLD' if cold else ''}")
+    return line[:MAX_TEXT]
 
 
 def main(argv: Optional[list] = None) -> int:
@@ -473,6 +623,11 @@ def main(argv: Optional[list] = None) -> int:
     parser.add_argument("--unused", action="store_true", help="also list MCP servers and skills not called in 7 days")
     parser.add_argument("--advise", action="store_true",
                         help="also propose cuts and improvements from the numbers (implies --unused); changes nothing")
+    parser.add_argument("--costs", action="store_true",
+                        help="also estimate what CLAUDE.md, rules, MEMORY.md and skill headers add to every call")
+    parser.add_argument("--project", type=Path, help="project folder for --costs (default: the current folder)")
+    parser.add_argument("--statusline", action="store_true",
+                        help="print one status line from the JSON Claude Code passes on stdin, then exit")
     parser.add_argument("--json", action="store_true", help="print JSON instead of the summary")
     parser.add_argument("--max-fill", type=float, help="exit 1 when any session's context fill is at or above this (0-1)")
     parser.add_argument("--version", action="version", version=__version__)
@@ -481,12 +636,16 @@ def main(argv: Optional[list] = None) -> int:
         parser.error("--minutes and --window must be positive")
     if args.max_fill is not None and not 0 < args.max_fill <= 1:
         parser.error("--max-fill must be above 0 and at most 1")
+    if args.statusline:
+        window = args.window or compact_window(CLAUDE_HOME)[0]
+        print(statusline(sys.stdin.read(MAX_STDIN), root=args.root, window=window))
+        return 0
     try:
         prices = load_prices(args.prices)
     except (OSError, ValueError) as err:
         parser.error(f"cannot read the price file: {err}")
     body = build(root=args.root, window=args.window, prices=prices, minutes=args.minutes, with_unused=args.unused,
-                 with_advice=args.advise)
+                 with_advice=args.advise, with_costs=args.costs, project=args.project)
     print(json.dumps(body, indent=2) if args.json else render(body))
     if args.max_fill is None:
         return 0

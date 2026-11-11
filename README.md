@@ -29,9 +29,11 @@ CI job when an agent run filled too much of its context window.
 Every Claude Code call re-reads the whole context, so context size is the cost driver. Token Meter shows it per
 running session: context size, how full the auto-compact window is, turns left before compaction, cache share, a
 cold-cache warning, main versus subagent tokens, and the MCP servers and skills you never call. So you know when
-to compact, when to start fresh and what to switch off. With `--advise` it goes one step further and proposes
-the cuts and improvements itself: compact now, start fresh, trim the baseline, split plan and build models, a
-local model for lookups, a skill for a repeated step, and MCP servers and skills to turn off.
+to compact, when to start fresh and what to switch off. `--costs` shows what every call pays before you type,
+per file: each CLAUDE.md, rule, your MEMORY.md index and every skill header. With `--advise` it goes one step
+further and proposes the cuts and improvements itself, with the tokens each one saves: compact now, start
+fresh, trim a heavy file, split plan and build models, a local model for lookups, a skill for a repeated step,
+and MCP servers and skills to turn off. `--statusline` puts the meter in your Claude Code status line.
 
 Read only, offline, Python standard library. No hooks, no telemetry, no settings edits.
 
@@ -82,9 +84,41 @@ python3 skills/token-meter/scripts/token_meter.py --unused
 
 Options: `--minutes N` (live window, default 15), `--window N` (context window, default from
 `~/.claude/settings.json`, else 200000), `--prices FILE` (cost; see `examples/prices.example.json`),
-`--json`, `--root DIR`, `--max-fill F` (exit 1 at or above this fill, 0-1; see CI below).
+`--json`, `--root DIR`, `--max-fill F` (exit 1 at or above this fill, 0-1; see CI below), `--unused`,
+`--advise`, `--costs`, `--project DIR` (for `--costs`, default the current folder), `--statusline`.
 
 Cost is shown only when you pass a price file. The meter never guesses prices.
+
+## Costs: what every call pays before you type
+
+```bash
+python3 skills/token-meter/scripts/token_meter.py --costs
+```
+
+```
+  loaded on every call: ~18k tokens (9% of window, chars/4) · instructions 2k, memory 5k, rules 6k, skill 5k
+      largest: memory:MEMORY.md 5k, rules:code-review 960, rules:coding-style 800, global:CLAUDE.md 564
+```
+
+It counts the files Claude Code loads into every call: your global and project `CLAUDE.md` files (up the
+folder tree), rules, the `MEMORY.md` index (only its first 200 lines load) and each skill's header (the body
+loads only when the skill is used). Tokens are estimated as characters / 4, offline, with no tokenizer. MCP tool
+lists are not on disk, so they are not here; they show up in `base`. The files are read only to count them:
+their text never reaches the output.
+
+## Statusline
+
+```
+ctx 163k ████████░░ 81% · 4 turns left · cache 95%
+```
+
+`--statusline` reads the JSON Claude Code passes on stdin and prints that one line, plus `COLD` when the cache
+expired. It reads only that session's log, and only when it sits under `~/.claude/projects`. To use it, add
+this to `~/.claude/settings.json` yourself (the meter never edits settings):
+
+```json
+"statusLine": {"type": "command", "command": "python3 /path/to/token_meter.py --statusline"}
+```
 
 ## Advise: what to cut and improve
 
@@ -100,8 +134,9 @@ python3 skills/token-meter/scripts/token_meter.py --advise
     [trim] 59d14008: first call 114k (57% of window) -> trim CLAUDE.md and rules, turn off unused MCP servers and skills
     [model-split] 59d14008: claude-opus-5-5 on 93% of calls -> /model opusplan: plan on the top model, build on a cheaper one
     [fresh] 16439f1d: COLD with 161k context -> start a fresh session instead of resuming, if the history is done
+    [trim-source] memory:MEMORY.md: ~5k tokens on every call -> trim it, or move detail to a file read on demand
     [cut] 2 MCP servers never called: turn off chrome-mine, notion
-    [cut] 3 skills never called: turn off old-skill, unused-skill, draft-skill
+    [cut] 3 skills never called: turn off old-skill, unused-skill, draft-skill (saves ~420/call)
 ```
 
 | Kind | When | Proposal |
@@ -114,7 +149,8 @@ python3 skills/token-meter/scripts/token_meter.py --advise
 | `model-split` | Opus or Fable on 90% of calls or more | plan on the top model, build on a cheaper one (`/model opusplan`) |
 | `local-model` | lookups (Read, Grep, Glob, web) are 60% of calls or more | a small local model for lookups, admitted first, never auto-installed |
 | `new-skill` | one non-generic tool carries 40% of calls or more | a skill or script for that step |
-| `cut` | MCP servers and skills never called in 7 days | turn them off |
+| `trim-source` | one file costs 2k tokens or more per call, or is over 300 lines (MEMORY.md: over 200) | trim it or move detail out |
+| `cut` | MCP servers and skills never called in 7 days | turn them off, with the tokens each skill saves per call |
 
 The rows are as content-free as the meter: kinds, session ids, numbers and names, each under 80 characters.
 
@@ -122,7 +158,8 @@ The rows are as content-free as the meter: kinds, session ids, numbers and names
 
 - **Read only and offline.** It reads `~/.claude/projects/**/*.jsonl`, the auto-compact window from
   `~/.claude/settings.json`, the MCP server names (never their values) from `~/.claude.json` and the folder
-  names under `~/.claude/skills`. It writes nothing, opens no network connection and starts no process.
+  names under `~/.claude/skills`. `--costs` also reads your CLAUDE.md files, rules, MEMORY.md and skill
+  headers to count their characters. It writes nothing, opens no network connection and starts no process.
 - **Numbers and names only.** No prompt, reply, file path or file content ever reaches the output. A name
   that is not a plain identifier prints as `other`, and any output string over 80 characters stops the run.
 - **No dependencies.** Python standard library only. The tests check that the source imports nothing that
@@ -138,7 +175,7 @@ See [SECURITY.md](SECURITY.md).
 runs that check on the logs an agent run wrote, so a pull request fails when the agent nearly hit auto-compact:
 
 ```yaml
-- uses: maumoya/token-meter@v0.4.0
+- uses: maumoya/token-meter@v0.5.0
   with:
     logs: ~/.claude/projects   # where the agent run wrote its logs
     max-fill: "0.92"           # fail at 92% full or more
@@ -178,6 +215,12 @@ so its next call writes the whole context to the cache again.
 
 **Will advise install a model or turn off a server?** No. It only prints proposals. Installing a local model
 or turning off an MCP server or skill is your step, and a new model should pass your own review first.
+
+**How exact is `--costs`?** It estimates tokens as characters / 4, which is close for English text and
+code. It is for spotting the heavy files, not for billing.
+
+**Does the status line slow Claude Code down?** It reads one log file per refresh, in plain Python, with no
+network.
 
 **Where do prices come from?** From a file you pass with `--prices`. The meter never guesses prices.
 
