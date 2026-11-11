@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: drop-unused
+expected_outcome: |
+  Given a reading with never-called MCP servers and skills, the agent names exactly those (linear, notion; pdf-tools, seo-audit) as candidates to remove to cut the context baseline, and keeps github, which is called.

@@ -1,0 +1,17 @@
+# Token Meter
+
+> Live token meter for Claude Code. Shows what every running session is spending right now - context size, how full the auto-compact window is, turns left before compaction, baseline, cache share, a cold mark when the prompt cache expired, main versus subagent tokens, optional cost, models, and calls per tool, MCP server and skill - plus the MCP servers and skills you never call. Read only, offline, prints numbers and names only, never prompt text. Use when the user says "/token-meter", "token meter", "how many tokens am I using", "how full is my context", "when will it compact", "why is this session so expensive", "token usage per session", "which MCP servers do I never use", "is my cache cold", or wants to cut Claude Code token cost.
+
+Version 0.3.0. GitHub Action: `uses: maumoya/token-meter@v0.3.0` fails a CI job when an agent run filled too much of its context window (`max-fill`, default 0.92). Turns left uses the average growth of the last 8 turns, measured within 2 turns 49% of the time on 617 real compactions.
+
+## Install
+
+- Claude Code: `/plugin marketplace add maumoya/token-meter` then `/plugin install token-meter@token-meter`
+- Any agent: `npx skills add maumoya/token-meter`
+
+## Files
+
+- [SKILL.md](https://github.com/maumoya/token-meter/blob/main/skills/token-meter/SKILL.md): the skill
+- [README.md](https://github.com/maumoya/token-meter/blob/main/README.md): what it does and how to install it
+- [action.yml](https://github.com/maumoya/token-meter/blob/main/action.yml): the CI budget gate
+- [forecast_bench.py](https://github.com/maumoya/token-meter/blob/main/scripts/forecast_bench.py): the forecast benchmark

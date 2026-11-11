@@ -16,10 +16,11 @@ Script: `scripts/token_meter.py` (Python 3.10+ standard library only).
 1. **Read.** `python3 scripts/token_meter.py` for every session active in the last 15 minutes.
    Add `--unused` for the never-called MCP servers and skills of the last 7 days, `--minutes N` to widen the
    live window, `--json` for machine output. Add `--prices FILE` only when the user gives a price file
-   (`examples/prices.example.json` shows the shape); never invent prices.
+   (`examples/prices.example.json` shows the shape); never invent prices. `--max-fill F` exits 1 when any
+   session's fill is at or above F (0-1): use it as a budget gate in scripts or CI.
 2. **Explain** each live session in plain words, highest fill first:
    - `ctx` and `%`: context of the latest call against the auto-compact window.
-   - `turns left`: turns until compaction at the median growth of the last 8 turns (`-` = not enough turns
+   - `turns left`: turns until compaction at the average growth of the last 8 turns (`-` = not enough turns
      or not growing).
    - `base`: the context of the first call. A high baseline means heavy instructions, MCP tool lists or skills.
    - `cache`: share of input read from the prompt cache. `COLD` = idle past the cache life, so the next call

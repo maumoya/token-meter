@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="170" viewBox="0 0 720 170" role="img" aria-label="Measured 2026-11-11 on {{compactions}} real compactions: turns left lands within 2 turns {{close_now}} of the time, up from {{close_before}} in v0.2.0">
+  <rect width="720" height="170" rx="18" fill="#0f5132"/>
+  <rect x="2" y="2" width="716" height="166" rx="16" fill="none" stroke="#4ade80" stroke-width="2"/>
+  <text x="40" y="78" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="54" font-weight="800" fill="#4ade80">{{close_now}}</text>
+  <text x="180" y="58" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="22" font-weight="700" fill="#ffffff">of "turns left" forecasts within 2 turns</text>
+  <text x="180" y="86" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="18" fill="#d1fae5">up from {{close_before}} in v0.2.0 ({{close_gain}})</text>
+  <text x="40" y="136" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="30" font-weight="800" fill="#4ade80">{{compactions}}</text>
+  <text x="120" y="136" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="18" fill="#ffffff">real compactions replayed · measured 2026-11-11</text>
+</svg>

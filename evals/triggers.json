@@ -1,0 +1,51 @@
+{
+  "skill": "token-meter",
+  "queries": [
+    {
+      "text": "/token-meter",
+      "trigger": true
+    },
+    {
+      "text": "how full is my context right now and when will it compact?",
+      "trigger": true
+    },
+    {
+      "text": "why is this claude code session so expensive?",
+      "trigger": true
+    },
+    {
+      "text": "show me token usage per session",
+      "trigger": true
+    },
+    {
+      "text": "which MCP servers do I never actually use?",
+      "trigger": true
+    },
+    {
+      "text": "is my prompt cache cold?",
+      "trigger": true
+    },
+    {
+      "text": "how many tokens am i burning rn",
+      "trigger": true,
+      "holdout": true
+    },
+    {
+      "text": "count the tokens in this paragraph for the OpenAI tokenizer",
+      "trigger": false
+    },
+    {
+      "text": "write a python function that tokenizes a sentence",
+      "trigger": false
+    },
+    {
+      "text": "add a new MCP server for Linear to my config",
+      "trigger": false
+    },
+    {
+      "text": "what is the price per million tokens for Sonnet?",
+      "trigger": false,
+      "holdout": true
+    }
+  ]
+}

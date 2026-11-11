@@ -1,0 +1,75 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>token-meter demo</title>
+<style>
+  html, body { margin: 0; background: #06281a; font-family: -apple-system, Segoe UI, Helvetica, Arial, sans-serif; color: #fff; }
+  .stage { width: 720px; height: 405px; position: relative; overflow: hidden;
+           background: radial-gradient(circle at 30% 20%, #0f5132, #06281a 70%); }
+  .title { position: absolute; left: 28px; top: 20px; font-size: 22px; font-weight: 800; }
+  .title b { color: #4ade80; }
+  .tank { position: absolute; left: 60px; top: 80px; width: 120px; height: 260px; border: 4px solid #d1fae5;
+          border-radius: 18px; overflow: hidden; background: #0b3a26; }
+  .fill { position: absolute; bottom: 0; left: 0; right: 0; height: 20%; background: #4ade80;
+          transition: height .45s ease, background .3s; }
+  .line92 { position: absolute; left: 50px; width: 140px; top: calc(80px + 4px + 260px * .08); border-top: 3px dashed #fbbf24; }
+  .line92 span { position: absolute; left: 146px; top: -12px; color: #fbbf24; font-size: 14px; font-weight: 700; }
+  .turn { position: absolute; left: 230px; width: 54px; height: 30px; border-radius: 8px; background: #d1fae5; color: #06281a;
+          font-weight: 800; font-size: 13px; display: grid; place-items: center; transition: left .45s ease, opacity .45s; }
+  .panel { position: absolute; right: 30px; top: 80px; width: 330px; padding: 18px; border-radius: 14px; background: #130d26;
+           font: 16px/1.9 ui-monospace, Menlo, monospace; color: #e5e7eb; }
+  .panel .k { color: #4ade80; }
+  .cold { color: #93c5fd; font-weight: 700; opacity: 0; transition: opacity .3s; }
+  .stamp { position: absolute; right: 70px; top: 300px; padding: 8px 18px; border: 4px solid #ef4444; color: #ef4444;
+           font-size: 26px; font-weight: 900; transform: rotate(-8deg) scale(2); opacity: 0; transition: all .35s ease; }
+  .stamp.on { opacity: 1; transform: rotate(-8deg) scale(1); }
+</style>
+<div class="stage">
+  <div class="title">Every turn re-reads the context. <b>token-meter</b> watches it fill.</div>
+  <div class="tank"><div class="fill" id="fill"></div></div>
+  <div class="line92"><span>auto-compact 92%</span></div>
+  <div class="panel">
+    <div>$ token_meter.py</div>
+    <div>ctx <span class="k" id="ctx">40k</span> · <span class="k" id="pct">20%</span> full</div>
+    <div>turns left <span class="k" id="left">14</span></div>
+    <div>cache 95% <span class="cold" id="cold">COLD</span></div>
+    <div id="gate">CI gate: max 92%</div>
+  </div>
+  <div class="stamp" id="stamp">CI FAIL 94%</div>
+</div>
+<script>
+  const fit = () => { document.querySelector(".stage").style.zoom = Math.min(innerWidth / 720, innerHeight / 405); };
+  fit(); addEventListener("resize", fit);
+  const steps = [20, 30, 40, 52, 63, 74, 84, 94];
+  const fill = document.getElementById("fill"), stage = document.querySelector(".stage");
+  let i = 0;
+  function tick() {
+    if (i >= steps.length) {   // loop, so any recording window shows the tank filling
+      i = 0;
+      document.querySelectorAll(".turn").forEach(t => t.remove());
+      document.getElementById("stamp").classList.remove("on");
+      document.getElementById("cold").style.opacity = 0;
+      fill.style.height = "0%"; fill.style.background = "#4ade80";
+      document.getElementById("ctx").textContent = "0k";
+      document.getElementById("pct").textContent = "0%";
+      setTimeout(tick, 1600);
+      return;
+    }
+    const pct = steps[i];
+    const t = document.createElement("div");
+    t.className = "turn"; t.textContent = "turn " + (i + 1); t.style.top = (330 - i * 30) + "px";
+    stage.appendChild(t);
+    requestAnimationFrame(() => { t.style.left = "120px"; t.style.opacity = "0"; });
+    fill.style.height = pct + "%";
+    if (pct >= 84) fill.style.background = "#fbbf24";
+    if (pct >= 92) fill.style.background = "#ef4444";
+    document.getElementById("ctx").textContent = Math.round(pct * 2) + "k";
+    document.getElementById("pct").textContent = pct + "%";
+    const growth = 10.6;
+    document.getElementById("left").textContent = Math.max(0, Math.floor((92 - pct) / growth));
+    if (i === 5) document.getElementById("cold").style.opacity = 1;
+    if (pct >= 92) setTimeout(() => document.getElementById("stamp").classList.add("on"), 300);
+    i++;
+    setTimeout(tick, 850);
+  }
+  setTimeout(tick, 400);
+</script>

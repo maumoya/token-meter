@@ -1,0 +1,45 @@
+# Action self-test: the gate passes under budget and fails over budget on a fixed fixture run.
+name: Action self-test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions: read-all
+
+jobs:
+  selftest:
+    name: Action self-test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Under budget passes
+        uses: ./
+        with:
+          logs: tests/fixtures/ci-run
+          minutes: "100000000"
+          window: "200000"
+          max-fill: "0.5"
+
+      - name: Over budget fails
+        id: over
+        continue-on-error: true
+        uses: ./
+        with:
+          logs: tests/fixtures/ci-run
+          minutes: "100000000"
+          window: "200000"
+          max-fill: "0.3"
+
+      - name: Assert the over-budget run failed
+        env:
+          FAIL_OUTCOME: ${{ steps.over.outcome }}
+        run: |
+          # outcome == 'failure' asserted above
+          [ "$FAIL_OUTCOME" = failure ] || { echo "expected failure, got $FAIL_OUTCOME"; exit 1; }

@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: explain-full-session
+expected_outcome: |
+  Given a token-meter reading where one session is 86% full with about 3 turns left and another has gone cold, the agent says the first session will auto-compact within a few turns and recommends compacting or a fresh session now, and says the cold session's next call re-writes its whole context.

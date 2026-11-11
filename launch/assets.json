@@ -1,0 +1,4 @@
+[
+  {"path": "assets/result-card.svg", "template": "launch/templates/result-card.svg", "uses": ["close_now", "close_before", "close_gain", "compactions"]},
+  {"name": "Social preview", "outward": "upload assets/header.png in Settings > Social preview", "uses": []}
+]

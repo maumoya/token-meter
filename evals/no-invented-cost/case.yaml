@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: no-invented-cost
+expected_outcome: |
+  Given a reading whose cost fields are null (no price file), the agent does not state a dollar cost. It says the meter shows no price without a price file and points to --prices with the example file.

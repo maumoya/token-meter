@@ -1,0 +1,6 @@
+{
+  "close_now": {"value": "49%", "source": "scripts/forecast_bench.py (average growth, within 2 turns, 3133 forecasts)", "date": "2026-11-11"},
+  "close_before": {"value": "40%", "source": "scripts/forecast_bench.py (median growth of v0.2.0, within 2 turns)", "date": "2026-11-11"},
+  "close_gain": {"value": "+9 pts", "source": "close_now minus close_before", "date": "2026-11-11"},
+  "compactions": {"value": "617", "source": "scripts/forecast_bench.py (compactions replayed)", "date": "2026-11-11"}
+}

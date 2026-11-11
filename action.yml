@@ -1,0 +1,41 @@
+name: Token Meter Budget Gate
+description: Fail a CI job when a Claude Code agent run filled too much of its context window. Read only, offline, prints numbers only.
+author: Mauricio Alonso Moya Tapia
+branding:
+  icon: activity
+  color: green
+
+inputs:
+  logs:
+    description: Claude Code projects log folder the agent run wrote
+    required: false
+    default: ~/.claude/projects
+  max-fill:
+    description: Fail when any session's context fill is at or above this share of the window (0-1)
+    required: false
+    default: "0.92"
+  minutes:
+    description: Count sessions whose log changed in the last N minutes
+    required: false
+    default: "1440"
+  window:
+    description: Context window in tokens (empty = from settings, else 200000)
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Measure the agent run
+      shell: bash
+      env:
+        TM_LOGS: ${{ inputs.logs }}
+        TM_MAX_FILL: ${{ inputs.max-fill }}
+        TM_MINUTES: ${{ inputs.minutes }}
+        TM_WINDOW: ${{ inputs.window }}
+        TM_SCRIPT: ${{ github.action_path }}/skills/token-meter/scripts/token_meter.py
+      run: |
+        logs="${TM_LOGS/#\~/$HOME}"
+        args=(--root "$logs" --minutes "$TM_MINUTES" --max-fill "$TM_MAX_FILL")
+        if [ -n "$TM_WINDOW" ]; then args+=(--window "$TM_WINDOW"); fi
+        python3 "$TM_SCRIPT" "${args[@]}"

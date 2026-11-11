@@ -104,18 +104,20 @@ class LiveSessions(Fixture):
         self.assertEqual(s["tokens"], {"main": 5100, "subagents": 3000})
         self.assertEqual(s["ctx_now"], 5000)              # subagent context never counts as the main one
         self.assertEqual(s["subagent_runs"], 1)
+        self.assertIn("1 run)", tm.render(self.build()))
 
-    def test_one_odd_turn_does_not_swing_the_forecast(self):
+    def test_big_reads_count_in_the_forecast(self):
         rows = []
         for i, ctx in enumerate((50_000, 60_000, 130_000, 140_000, 150_000)):   # one 70k jump (a big file read)
             rows += [user(), reply(f"m{i}", ctx)]
         self.write("p/s1.jsonl", rows)
         s = self.build()["sessions"][0]
-        self.assertEqual(s["turns_left"], 5)             # 50k left / 10k a turn, not 50k / 25k
+        self.assertEqual(s["turns_left"], 2)             # 50k left / 25k a turn on average
 
-    def test_median_slope(self):
-        self.assertEqual(tm.median_slope([10, 20, 30]), 10)
-        self.assertEqual(tm.median_slope([5]), 0.0)
+    def test_mean_slope(self):
+        self.assertEqual(tm.mean_slope([10, 20, 30]), 10)
+        self.assertEqual(tm.mean_slope([10, 20, 60]), 25)
+        self.assertEqual(tm.mean_slope([5]), 0.0)
 
     def test_old_sessions_are_not_live(self):
         self.write("p/old.jsonl", [user(), reply("a", 5000)], age_s=3600)
@@ -183,6 +185,19 @@ class Safety(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp, redirect_stdout(io.StringIO()) as out:
             self.assertEqual(tm.main(["--root", tmp, "--json", "--window", "1000"]), 0)
         self.assertEqual(json.loads(out.getvalue())["sessions"], [])
+
+    def test_max_fill_gate(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "p" / "s1.jsonl"
+            path.parent.mkdir()
+            path.write_text(json.dumps(user()) + "\n" + json.dumps(reply("a", 1500)) + "\n", encoding="utf-8")
+            with redirect_stdout(io.StringIO()):
+                self.assertEqual(tm.main(["--root", tmp, "--window", "2000", "--max-fill", "0.8"]), 0)
+            with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()) as err:
+                self.assertEqual(tm.main(["--root", tmp, "--window", "2000", "--max-fill", "0.75"]), 1)
+            self.assertIn("s1", err.getvalue())
+            with self.assertRaises(SystemExit), redirect_stderr(io.StringIO()):
+                tm.main(["--max-fill", "1.5"])
 
     def test_bad_price_file_is_an_error(self):
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as handle:
