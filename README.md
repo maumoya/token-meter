@@ -10,6 +10,7 @@
   <a href="https://opensource.org/license/mit"><img src="https://img.shields.io/badge/Open%20Source-OSI%20approved%20license-3DA639?logo=opensourceinitiative&logoColor=white" alt="Open Source: OSI-approved MIT license"></a>
   <img src="https://img.shields.io/badge/privacy-no%20tracking%20%C2%B7%20no%20data%20collected-7c5cfc" alt="Privacy: no tracking, no data collected">
   <a href="https://scorecard.dev/viewer/?uri=github.com/maumoya/token-meter"><img src="https://api.scorecard.dev/projects/github.com/maumoya/token-meter/badge" alt="OpenSSF Scorecard"></a>
+  <a href="https://www.bestpractices.dev/projects/16575"><img src="https://www.bestpractices.dev/projects/16575/badge" alt="OpenSSF Best Practices"></a>
 </p>
 
 <p align="center">
