@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- README shows the OpenSSF Best Practices badge (passing).
+- CI actions bumped to their latest pinned commits.
+
 ## 0.4.0 - 2026-11-11
 
 - `--advise`: proposals for what to cut and improve, drawn only from the numbers: compact, start fresh, trim
