@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- History: the 0.5.0 CI actions bump is now authored by the maintainer (same files); tag v0.5.0 re-signed and
+  its release rebuilt on the new commit.
+
 ## 0.5.0 - 2026-11-11
 
 - README shows the OpenSSF Best Practices badge (passing).
