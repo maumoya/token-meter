@@ -4,6 +4,7 @@
 
 - History: the 0.5.0 CI actions bump is now authored by the maintainer (same files); tag v0.5.0 re-signed and
   its release rebuilt on the new commit.
+- Repo: removed two stale branches from merged PRs that still held the pre-rewrite commit.
 
 ## 0.5.0 - 2026-11-11
 
